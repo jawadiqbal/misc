@@ -311,6 +311,238 @@ Pagination or virtual scrolling, OnPush change detection or signals, memoized se
 
 ---
 
+## E.2 Frontend brush-up — generic topics (Angular 17 / NGRx ↔ React / TypeScript)
+
+Architects often ask **concepts**, not Angular trivia. Your React and Vue background covers most of the ideas; brush up on the **Angular names** and be ready to state a trade-off. Insurance UIs (large quote forms, tables, multi-step flows) make forms, async data, and performance especially likely.
+
+**How to use this section:** For each row, you should be able to (1) define it in one sentence, (2) name when you'd use it on a pricing UI, (3) map it to React if asked.
+
+### Priority order (if time is limited)
+
+1. RxJS operators for user input → API (`debounceTime`, `switchMap`)
+2. Reactive forms + validation (multi-step quote wizard)
+3. NGRx vs local state (when not to use a global store)
+4. Change detection / signals vs unnecessary re-renders
+5. HTTP interceptors + auth (BFF + session cookie story)
+6. Frontend security (XSS, token storage) — **your strength**
+
+---
+
+### 1. TypeScript (shared with React stacks)
+
+| Topic | Why it matters in interview |
+|---|---|
+| `type` vs `interface`, unions, **discriminated unions** | Model quote lifecycle: `Draft \| Calculating \| Priced \| Failed` (same idea as Scala sealed traits) |
+| `unknown` vs `any`, narrowing, type guards | Safe handling of API error payloads |
+| Generics, `Partial`, `Pick`, `Record`, `ReturnType` | Typed DTOs shared with backend / OpenAPI codegen |
+| **`satisfies` / `as const`** | Config objects that stay typed without widening |
+| Decorators (`@Component`, `@Injectable`) | Angular-specific; know they are stage-3 and power the framework |
+
+**Likely question:** "How do you keep frontend and backend contracts aligned?" OpenAPI (or similar) → generated TypeScript clients; contract tests; avoid hand-written DTOs drifting.
+
+---
+
+### 2. Reactivity and change detection
+
+| Concept | Angular 17+ | React / Vue (your anchor) |
+|---|---|---|
+| Local state | `signal()`, `signal.set()` | `useState` / Vue `ref` |
+| Derived state | `computed()` | `useMemo` / computed properties |
+| Side effects | `effect()`, lifecycle hooks | `useEffect` |
+| Skip redundant UI work | `ChangeDetectionStrategy.OnPush` | `React.memo`, pure components |
+| List identity | `@for (item of items; track item.id)` | `key={id}` — wrong keys cause bugs |
+
+**Likely question:** "How does Angular know when to update the DOM?"
+
+- **Classic:** Zone.js patches async APIs (HTTP, timers) and triggers change detection.
+- **Modern:** **Signals** give fine-grained updates; less reliance on Zone (Angular is moving toward zoneless).
+- **React contrast:** re-render component tree + Virtual DOM diff.
+
+For a pricing table with thousands of rows, say **OnPush or signals + `track`** so editing one field doesn't re-render the whole grid.
+
+---
+
+### 3. RxJS (largest Angular-specific gap)
+
+Used by `HttpClient`, router events, forms, and NGRx effects. React teams often skip this; spend focused time here.
+
+| Topic | One-line |
+|---|---|
+| Observable vs Promise | Observable is lazy, can emit many values, cancellable |
+| Cold vs hot | Cold starts per subscriber; hot (e.g. `Subject`) shares one stream |
+| `BehaviorSubject` | Holds current value; good for "latest quote request id" |
+| **`switchMap`** | Cancel previous inner observable when a new outer value arrives — **use for "user changed inputs, discard stale price calculation"** |
+| **`mergeMap`** | Run inner observables in parallel — use when order doesn't matter |
+| **`concatMap`** | Queue inner work sequentially |
+| **`exhaustMap`** | Ignore new outers while inner is running — **double-click "Get quote"** |
+| `debounceTime` / `distinctUntilChanged` | Wait until user stops typing before calling pricing API |
+| `catchError`, `retry`, `finalize` | Error UX and loading flags |
+| Memory leaks | Prefer **`async` pipe** in templates or `takeUntilDestroyed()`; never bare `.subscribe()` in components without teardown |
+
+**Classic interview question:** "User types in a search box that hits an API. Which operator?" → `debounceTime(300)` + `distinctUntilChanged()` + **`switchMap`** to cancel stale requests.
+
+**React mapping:** `useEffect` + `AbortController` for cancellation; RxJS is the composable version of that pattern.
+
+**Cheat sheet:** [RxJS operators decision tree (learnrxjs.io)](https://www.learnrxjs.io/learn-rxjs/operators)
+
+---
+
+### 4. State management (NGRx and alternatives)
+
+| Layer | Examples on a quote app |
+|---|---|
+| **Local UI state** | Modal open, accordion expanded, field focus |
+| **Shared client state** | Multi-step wizard progress, selected product line |
+| **Server state** | Quote result, reference data (countries, cover types) |
+
+**NGRx (Redux pattern):**
+
+- **Action** — event (`[Quote] CalculateRequested`)
+- **Reducer** — pure `(state, action) => newState`
+- **Selector** — memoized derived state (like `reselect`)
+- **Effect** — side effects (HTTP), listens to actions, dispatches new actions
+
+**When to use NGRx:** complex shared flows (wizard + cached lookups + optimistic updates). **When not to:** simple screens, mostly presentational components — use signals/component state or **NGRx Signal Store** (lighter).
+
+**Likely question:** "Where would you put the calculated premium?" Server is source of truth; store **quote id + status + last result** in client state; don't treat the store as a database.
+
+**React mapping:** Redux Toolkit + RTK Query, Zustand, TanStack Query for server state.
+
+---
+
+### 5. Forms (very likely — insurance quotes are form-heavy)
+
+| Topic | Angular | React equivalent |
+|---|---|---|
+| Model | **Reactive forms** (`FormGroup`, `FormControl`) — preferred for complex UIs | Controlled components |
+| Validation | Sync + **async validators** (e.g. check policy number server-side) | Zod/Yup + React Hook Form |
+| Dynamic UI | Add/remove `FormArray` sections (optional covers) | Field arrays in RHF |
+| Cross-field rules | Validator on parent group (end date after start date) | Schema `.refine()` |
+| Typed forms | Typed `FormControl<string>` etc. | Inferred types from Zod |
+
+**Likely questions:**
+
+- Reactive vs template-driven? Reactive for anything non-trivial (testable, typed, composable).
+- Multi-step wizard: store **draft** in NGRx or route state; persist to backend if "save and continue later"; validate per step before advancing.
+
+---
+
+### 6. HTTP layer and API integration
+
+- **`HttpClient`** — returns `Observable`; use interceptors for cross-cutting concerns.
+- **Interceptors:** attach auth (cookie session via BFF), **correlation ID**, base URL per env, map 401 → login, retry idempotent GETs only.
+- **Loading / error / empty UI** as explicit states (not an afterthought).
+- **Cancel in-flight** requests when navigating away (`switchMap` or `takeUntil`).
+- **Server-state libraries:** know TanStack Query pattern even if stack uses plain HttpClient + NGRx effects.
+
+**React mapping:** axios/fetch interceptors; React Query for cache + stale-while-revalidate.
+
+---
+
+### 7. Dependency injection
+
+- `@Injectable({ providedIn: 'root' })` services; constructor injection; `inject()` function.
+- **Hierarchy:** root vs component providers (scoped service per feature module).
+- **Your anchor:** Play **Guice** — same inversion-of-control idea; Angular just makes it first-class in the framework.
+
+**Likely question:** "How do you test a component that calls a pricing API?" Provide a **test double** via `TestBed.overrideProvider` (like mocking a Guice binding).
+
+---
+
+### 8. Routing
+
+- **Lazy-loaded routes** — smaller initial bundle (`loadComponent` / `loadChildren`).
+- **Guards** — auth, unsaved-changes (`CanDeactivate`).
+- **Resolvers** — prefetch data before route activates (React Router **loader**).
+- Route params vs query params for shareable quote links.
+
+---
+
+### 9. Performance
+
+- **Lazy loading** routes and **`@defer`** blocks (defer heavy widgets until visible — like `React.lazy` + `Suspense`).
+- **Virtual scroll** (`@angular/cdk/scrolling`) for long tariff tables — React: `react-window` / TanStack Virtual.
+- Avoid expensive work in templates; use `computed()` / pipes / memoized selectors.
+- **Bundle analysis**; tree shaking; avoid importing all of lodash.
+- **Core Web Vitals (definitions):** LCP (largest paint), INP (interaction responsiveness), CLS (layout shift) — know names, not guru-level tuning.
+
+---
+
+### 10. Frontend security (lean in — matches your resume)
+
+| Risk | Angular | React | What to say |
+|---|---|---|---|
+| XSS | Default sanitization; **`bypassSecurityTrustHtml`** is a code smell | Escaping; **`dangerouslySetInnerHTML`** risky | Never render unsanitized HTML from users or LLMs |
+| Token in browser | Prefer **httpOnly cookie** via BFF | Same | You built auth middleware; tokens in `localStorage` are XSS-stealable |
+| CSRF | Relevant for cookie sessions | Same | BFF + SameSite cookies + anti-CSRF token where required |
+| CORS | Browser enforces; configure at API gateway | Same | Misconfigured CORS breaks dev, not a substitute for auth |
+
+**Strong line for Allianz:** "I'd keep access tokens off the browser and let the Node/Fastify BFF hold the session — same threat model I cared about on login APIs."
+
+---
+
+### 11. Testing
+
+| Layer | Angular | React parallel |
+|---|---|---|
+| Unit | **TestBed**, Angular Testing Library (user-centric queries) | RTL + Jest/Vitest |
+| HTTP | **`HttpTestingController`** expects one request, flushes mock | MSW |
+| NGRx | Test reducers/selectors as pure functions; mock effects | Redux slice tests |
+| E2E | Playwright / Cypress | Same tools |
+
+**Likely question:** "What do you test on the frontend vs backend?" Backend: pricing correctness. Frontend: validation rules, happy/error paths, accessibility of critical flows, contract with API (not duplicate business math in UI).
+
+---
+
+### 12. Node.js / Fastify BFF (in their JD)
+
+- Event loop — **don't block** (CPU work off main thread or keep it in Java calculators).
+- Fastify: plugins, **JSON Schema** for request/response validation.
+- BFF owns: session, aggregating facade + reference-data calls, response shaping for Angular.
+- BFF must **not** own: premium calculation, parameter versioning rules.
+
+**Your anchor:** blocking in Akka/Play dispatchers starves the pool — same lesson as blocking the Node event loop.
+
+---
+
+### 13. Enterprise extras (quick skim)
+
+- **i18n / locale:** `Intl.NumberFormat` / `CurrencyPipe` for premiums in THB/EUR; date formats; Allianz operates multi-country.
+- **Accessibility:** semantic HTML, labels, keyboard nav, focus management in modals/wizards.
+- **Design system:** Allianz open-sources **[ng-aquila](https://github.com/allianz/ng-aquila)** — skim component list before interview (shows homework).
+- **Monorepo tooling:** Nx is common with Angular enterprise teams (affected builds, module boundaries).
+- **Build:** Angular CLI; esbuild-based application builder (v17+).
+
+---
+
+### 3-hour hands-on lab (recommended)
+
+Build a minimal **quote calculator** shell in Angular 17 (even locally):
+
+1. Standalone component + **signals** for UI state  
+2. **Reactive form** with validators (sum insured, product type)  
+3. `valueChanges` piped through **`debounceTime` + `switchMap`** to a mock `HttpClient` pricing endpoint  
+4. One **HTTP interceptor** (e.g. `X-Correlation-Id`)  
+5. Optional: tiny **NGRx** slice (action → effect → reducer) for "last quote result"  
+
+In the interview: *"I built a small Angular spike to map concepts I already use in React — debounced async search is the same problem as debounced quote recalculation."*
+
+---
+
+### Frontend verbal questions to rehearse (60 seconds each)
+
+1. `switchMap` vs `mergeMap` for pricing API calls when the user edits the form  
+2. When would you **not** use NGRx?  
+3. Reactive forms vs template-driven  
+4. How BFF + httpOnly cookie reduces XSS token theft  
+5. OnPush / signals vs default change detection for large tables  
+6. How you test HTTP without hitting real backend (`HttpTestingController` / MSW)  
+7. Lazy loading + `@defer` for heavy quote breakdown widget  
+
+Add **#1, #4, and #7** to section 6 below if you extend the rehearse list.
+
+---
+
 # PART F — Azure, Kubernetes, operations
 
 ### Q: How would you deploy this platform on Azure?
@@ -455,7 +687,7 @@ Pick 4–5:
 | 1 | Part A (pricing facade, parameter versioning, orchestration) | Say the facade design out loud in 3 minutes |
 | 2 | Part B (Kafka: outbox, idempotency, DLQ, partitioning) + Part C (Postgres, Flyway) | Explain the outbox without notes |
 | 3 | Part D (Java 21–25, Spring Boot 4, Spring Security, Kotlin basics) | Skim Spring Boot 4 release notes; write Kotlin equivalents of 3 Scala snippets |
-| 4 | Part E (Angular 17, NGRx, BFF) | Build a 30-minute Angular 17 + NGRx toy to speak from experience |
+| 4 | Part E + **E.2** (Angular 17, RxJS, NGRx, BFF) | Complete the 3-hour quote-calculator lab or rehearse E.2 verbal list |
 | 5 | Part F + G (Azure mapping, Kubernetes for JVM, API design, security) | Draw the Azure deployment verbally |
 | 6 | Part H (AI tools) + update resume bullet | Two concrete AI stories, 60 seconds each |
 | 7 | Part J resume deep-dives + mock interview | Record yourself; cut answers that run past 90 seconds |
@@ -532,8 +764,14 @@ Also consider adding "Kotlin (learning)" only if you actually start, and mention
 **Frontend**
 
 - [Angular signals](https://angular.dev/guide/signals) and [control flow](https://angular.dev/guide/templates/control-flow)
+- [Angular reactive forms](https://angular.dev/guide/forms/reactive-forms)
+- [RxJS learnrxjs.io](https://www.learnrxjs.io/) — especially `switchMap`, `debounceTime`, `exhaustMap`
 - [NGRx docs](https://ngrx.io/docs) and [NGRx Signal Store](https://ngrx.io/guide/signals)
+- [Angular CDK virtual scroll](https://material.angular.io/cdk/scrolling/overview)
+- [Allianz ng-aquila design system](https://github.com/allianz/ng-aquila)
 - [Fastify docs](https://fastify.dev/docs/latest/)
+- [TanStack Query](https://tanstack.com/query/latest) (server-state pattern; compare to NGRx effects)
+- [Testing Library Angular](https://testing-library.com/docs/angular-testing-library/intro/)
 
 **Azure and Kubernetes**
 

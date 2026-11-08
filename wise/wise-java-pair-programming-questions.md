@@ -21,7 +21,26 @@ The public question bank for this round is small. From 2025–2026 writeups (Gla
 - HackerRank may run hidden tests. Other candidates were told not to bother compiling, and to get the data structures right. Prepare as if tests will run.
 - They change the prompt mid-way: metrics, a different window, "what if two threads call at once." Knowing the pattern matters more than memorising the constants.
 
-A separate report of a DSA question plus a REST-API question was a **prescreen**, not this round. The share-offering / "don't oversell 100 million shares" prompt is the **system-design** round that comes after. Don't spend this hour on it.
+A separate report of a DSA question plus a REST-API question was a **prescreen**, not this round. The share-offering / "don't oversell 100 million shares" prompt is usually the **system-design** round that comes after, though one Glassdoor report lists "implement a system to sell 10000 shares" next to the circuit breaker.
+
+---
+
+## Single-file solutions in this folder
+
+Each file is plain JDK 21 with no dependencies. Each fits in roughly 60 minutes and carries its own self-checks in `main`. Run any of them with `java <File>.java`.
+
+| File | Prompt (as reported) | Core idea |
+|---|---|---|
+| [`CircuitBreaker.java`](CircuitBreaker.java) | `WebClient.execute`: 3 failures in 10 min → stop calling that service for 5 min | Per-service deque of failure timestamps, closed / open / half-open, single trial call, lock not held during the HTTP call |
+| [`ExchangeRateCache.java`](ExchangeRateCache.java) | "Implement a currency rate API, then a cache to store, update and get rates" | TTL cache over a flaky provider, one fetch per expired pair, bounded stale fallback |
+| [`BestExchangeRate.java`](BestExchangeRate.java) | TransferWise "Trading Routes": best rate from A to B via intermediaries | Bellman-Ford on max product, V−1 rounds because no cycle is profitable |
+| [`ShareOffering.java`](ShareOffering.java) | Sell N shares to pre-authorised users within a window, don't oversell; debit is a black box | CAS reservation, then debit, release on failure; idempotent request ids; per-user cap |
+| [`OrderExecution.java`](OrderExecution.java) | Execute orders against existing balance bounds | Per-account lock around check-and-debit, BigDecimal with explicit rounding, idempotent order ids |
+| [`TicTacToe.java`](TicTacToe.java) | Multi-player tic-tac-toe on N×N, K in a row wins | O(K) win check along four lines through the last move, synchronized moves and turn order |
+| [`RateLimiter.java`](RateLimiter.java) | Token manager / rate limiter | Per-client token bucket with lazy refill from an injected clock |
+| [`TransferVolume.java`](TransferVolume.java) | Total money moved per currency over a rolling 24 h | Ring of one-minute buckets plus a running total, O(1) record, fixed memory |
+
+The circuit breaker is the one most likely to come up. The rate-cache and share-offering prompts come from candidate reports on Glassdoor and Reddit. Trading routes is from a public TransferWise coding contest. The tic-tac-toe, order-execution, rate-limiter and rolling-volume prompts come from interview-prep aggregators, so treat them as lower confidence.
 
 ---
 
